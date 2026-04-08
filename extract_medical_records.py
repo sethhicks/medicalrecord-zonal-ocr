@@ -40,6 +40,8 @@ ZONES: dict[str, tuple[int, int, int, int]] = {
     "name":            (78, 506, 830,  100),
     "date_of_service": (92, 2130, 250, 85),
     "total_charge":    (1550, 2725, 280,  75),
+    "dob":             (920, 550, 310,  50),
+    "cpt_hcpcs":       (790, 2140, 190,  75),
 }
 
 # Tesseract page-segmentation mode per zone.
@@ -48,6 +50,8 @@ ZONE_PSM: dict[str, str] = {
     "name":            "--psm 7",
     "date_of_service": "--psm 7",
     "total_charge":    "--psm 7",
+    "dob":             "--psm 7",
+    "cpt_hcpcs":       "--psm 8",  # single word — 5-digit code
 }
  
 # Maps each zone key to its Excel column label and cleaner function name.
@@ -56,6 +60,8 @@ ZONE_FIELDS: dict[str, dict] = {
     "name":            {"label": "Name",            "cleaner": "name"},
     "date_of_service": {"label": "Date of Service", "cleaner": "date"},
     "total_charge":    {"label": "Total Charge",    "cleaner": "charge"},
+    "dob":             {"label": "Date of Birth",   "cleaner": "date"},
+    "cpt_hcpcs":       {"label": "CPT/HCPCS",       "cleaner": "cpt"},
 }
  
 OUTPUT_FILE = "medical_records_output.xlsx"
@@ -176,10 +182,24 @@ def clean_charge(raw: str) -> str:
     return cleaned
  
  
+def clean_cpt(raw: str) -> str:
+    """Extract a 5-digit CPT/HCPCS code from OCR output."""
+    # First try to find an explicit 5-digit sequence
+    match = re.search(r'\b(\d{5})\b', raw)
+    if match:
+        return match.group(1)
+    # Fallback: strip all non-digits and zero-pad or truncate to 5
+    digits = re.sub(r'\D', '', raw)
+    if digits:
+        return digits[:5].zfill(5)
+    return raw.strip()
+ 
+ 
 CLEANERS = {
     "name":   clean_name,
     "date":   clean_date,
     "charge": clean_charge,
+    "cpt":    clean_cpt,
 }
  
  
@@ -259,7 +279,7 @@ LEFT         = Alignment(horizontal="left",   vertical="center")
 THIN         = Side(style="thin", color="CCCCCC")
 BORDER       = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 # Base column widths — extended dynamically from ZONE_FIELDS
-_BASE_COL_WIDTHS = {"File": 30, "Name": 25, "Date of Service": 18, "Total Charge": 16}
+_BASE_COL_WIDTHS = {"File": 30, "Name": 25, "Date of Service": 18, "Total Charge": 16, "Date of Birth": 18, "CPT/HCPCS": 14}
  
 def build_header(active_zones: list[str]) -> list[str]:
     """Return the ordered Excel column list for the given active zones."""
