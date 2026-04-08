@@ -1,0 +1,5 @@
+opencv-python
+numpy
+pytesseract
+pdf2image
+openpyxl
