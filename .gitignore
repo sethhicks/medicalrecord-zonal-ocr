@@ -1,4 +1,4 @@
-pdfs/
+pdfs/*.pdf
 debug_*.png
 medical_records_output.xlsx
 __pycache__/
