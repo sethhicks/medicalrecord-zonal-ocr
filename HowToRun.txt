@@ -5,6 +5,7 @@
 -In Windows search bar, search "Edit environment variables"
 -Edit the "Path" variable, and add C:\Program Files\Tesseract-OCR
 -Also add C:\Program Files\poppler\Library\bin
+-Add templates to template folder as "template_cms.png" and "template_ub.png"
 To run script:
 1. Open CMD in folder
 2. Place PDF to scan in pdfs folder
