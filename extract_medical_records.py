@@ -8,10 +8,10 @@ Usage:
     python extract_medical_records.py path/to/claims.pdf
 
     python extract_medical_records.py path/to/claims.pdf --zones name,total_charge
-    python extract_medical_records.py path/to/claims.pdf --form 1500
+    python extract_medical_records.py path/to/claims.pdf --form cms
 
-    python extract_medical_records.py --calibrate templates/template_1500.png --form 1500
-    python extract_medical_records.py --save-template pdfs/sample.pdf --form 1500
+    python extract_medical_records.py --calibrate templates/template_1500.png --form cms
+    python extract_medical_records.py --save-template pdfs/sample.pdf --form cms
 
 Output:
     medical_records_output.xlsx  (created in the working directory)
@@ -88,10 +88,10 @@ ZONE_FIELDS: dict[str, dict] = {
 }
 
 FORM_ZONES: dict[str, dict] = {
-    "1500": ZONES_1500,
+    "cms": ZONES_1500,
     "ub":   ZONES_UB,
 }
-DEFAULT_FORM = "1500"
+DEFAULT_FORM = "cms"
 
 # Detection regions for form identification.
 #           x      y     w     h
@@ -106,7 +106,7 @@ DETECT_REGION_UB   = (2200, 0,   350, 300)  # "4 TYPE OF BILL"   — top-right
 #   templates/template_ub.png    — reference scan for UB-04 forms
 #
 # Generate a template from a PDF:
-#   python extract_medical_records.py --save-template pdfs/sample.pdf --form 1500
+#   python extract_medical_records.py --save-template pdfs/sample.pdf --form cms
 TEMPLATE_DIR = "templates"
 
 # ---------------------------------------------------------------------------
@@ -238,7 +238,7 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
 # ---------------------------------------------------------------------------
 
 def detect_form_type(img_bgr: np.ndarray) -> str:
-    """OCR header regions to identify the form type. Returns '1500' or 'ub'."""
+    """OCR header regions to identify the form type. Returns 'cms' or 'ub'."""
 
     def read_region(region: tuple[int, int, int, int],
                     upscale: int = 1, enhance: bool = False) -> str:
@@ -267,11 +267,11 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
 
     if DEBUG:
         save_detect_debug(img_bgr, "autodetect")
-        print(f"    [debug] 1500 detect text: {top_left!r}")
+        print(f"    [debug] cms detect text: {top_left!r}")
         print(f"    [debug] UB detect text:   {bottom_left!r}")
 
     if "health insurance" in top_left:
-        return "1500"
+        return "cms"
     if any(kw in bottom_left for kw in ("type", "bill", "type of bill", "4 type")):
         return "ub"
 
@@ -344,12 +344,36 @@ def clean_date(raw: str) -> str:
 
 
 def clean_charge(raw: str) -> str:
-    """Return whole-dollar charge amount — no decimal insertion."""
+    """Return whole-dollar charge amount — strips cents but preserves dollar amounts ending in 00.
+
+    Handles:
+      "361 00"     → "361"    (space-separated cents column)
+      "361.00"     → "361"    (decimal cents)
+      "36100.00"   → "36100"  (large amount with decimal cents)
+      "3769763"    → "3769763" (no cents, unchanged)
+    """
     lines = [l.strip() for l in raw.splitlines() if l.strip()]
     if len(lines) > 1:
         raw = max(lines, key=lambda l: len(re.findall(r'\d', l)))
-    cleaned = re.sub(r'\s+00$', '', raw.strip())
-    return re.sub(r'[^\d]', '', cleaned)
+    raw = raw.strip()
+
+    # If a decimal point or space separates dollars from cents, strip the cents
+    # e.g. "361.00" → "361", "36100.00" → "36100", "361 00" → "361"
+    match = re.match(r'^(\d+)[.\s]+\d{2}$', raw)
+    if match:
+        return re.sub(r'[^\d]', '', match.group(1))
+
+    # No explicit separator — strip non-digits then check for merged cents.
+    # A value ending in exactly "00" where the remaining digits are > 0
+    # is almost certainly a dollars+cents merge (e.g. "36100" = "361.00").
+    # Exception: if the full number is a round hundred (e.g. 36100 could be
+    # a real amount), we cannot tell — so only strip if the OCR debug image
+    # shows a visible gap. As a safe heuristic we strip only when the value
+    # has 5 or fewer digits (small charges where cents columns appear).
+    digits = re.sub(r'[^\d]', '', raw)
+    if digits.endswith('00') and 3 <= len(digits) <= 5:
+        digits = digits[:-2]
+    return digits
 
 
 def clean_cpt(raw: str) -> str:
@@ -382,9 +406,8 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
         return ""
 
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-    if field_name == "name":
-        gray = cv2.resize(gray, (gray.shape[1] * 2, gray.shape[0] * 2),
-                          interpolation=cv2.INTER_CUBIC)
+    gray = cv2.resize(gray, (gray.shape[1] * 2, gray.shape[0] * 2),
+                      interpolation=cv2.INTER_CUBIC)
 
     processed = preprocess_image(gray, sharpen=(field_name != "name"))
 
@@ -541,7 +564,7 @@ def run_calibration(path: str, zones: dict[str, tuple[int, int, int, int]]) -> N
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 200, 0), 2)
         cv2.putText(img, name, (x + 4, max(y - 6, 16)),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.55, (0, 200, 0), 2)
-    for label, (x, y, w, h) in [("DETECT:1500", DETECT_REGION_1500),
+    for label, (x, y, w, h) in [("DETECT:CMS", DETECT_REGION_1500),
                                   ("DETECT:UB",   DETECT_REGION_UB)]:
         cv2.rectangle(img, (x, y), (x + w, y + h), (0, 215, 255), 2)
         cv2.putText(img, label, (x + 4, y + 20),
