@@ -1,20 +1,23 @@
 # Custom Zonal OCR Project
 
-A Python script that extracts structured data from medical record PDFs using zonal OCR — cropping to specific x/y coordinates on the page — and writes the results to an Excel file.
+A Python script that extracts structured data from medical record PDFs (CMS-1500 and UB-04) using zonal OCR with template-based alignment, and writes the results to an Excel file.
 
-Designed for CMS-1500 and similarly formatted medical billing forms where fields always appear at fixed positions across all documents.
+Each page of the input PDF is automatically identified as a 1500 or UB form, aligned to a reference template to correct for scan variation, and then OCR'd at specific field coordinates.
 
 ---
 
 ## Features
 
-- **Zonal OCR** — crops to exact pixel coordinates per field rather than scanning the full page, improving accuracy and speed
-- **cv2 pre-processing** — denoising, adaptive thresholding, deskewing, and sharpening before OCR
-- **PSM fallback** — automatically tries multiple Tesseract page segmentation modes and picks the richest result
-- **Field cleaners** — post-processes raw OCR output to normalize names, dates (`MM/DD/YYYY`), and currency values
-- **Excel output** — writes results to a formatted `.xlsx` file, overwriting it on each run
-- **Selective extraction** — choose which fields to extract per run via `--zones`
-- **Calibration tool** — interactive window to find pixel coordinates for any field on your PDF
+- **Automatic form detection** — identifies CMS-1500 and UB-04 forms per page without manual input
+- **Template alignment** — ORB feature matching + homography corrects translation, rotation, scale, and perspective distortion between scans
+- **Confidence scoring** — low-confidence alignments are flagged in the console and highlighted yellow in Excel
+- **Zonal OCR** — crops to exact pixel coordinates per field for accuracy and speed
+- **cv2 pre-processing** — denoising, Otsu thresholding, deskewing, and optional sharpening
+- **PSM fallback** — tries multiple Tesseract page segmentation modes and picks the best result
+- **Field cleaners** — normalises names, dates (`MM/DD/YYYY`), and currency values from raw OCR output
+- **Multi-page support** — processes every page of a single PDF, one Excel row per page
+- **Selective extraction** — choose which fields to extract via `--zones`
+- **Calibration tool** — interactive window to find pixel coordinates for any field
 
 ---
 
@@ -34,7 +37,7 @@ pip install -r requirements.txt
 | macOS | `brew install tesseract poppler` |
 | Windows | Install [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) and [Poppler](https://github.com/oschwartz10612/poppler-windows/releases), then add both to PATH |
 
-On Windows you may also need to set the Tesseract path explicitly at the top of the script:
+On Windows you may also need to set the Tesseract path explicitly near the top of the script:
 
 ```python
 pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
@@ -44,84 +47,108 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 
 ## Usage
 
-### Basic — process all PDFs in the `./pdfs/` folder
+### Basic — process all pages of a PDF
 
 ```bash
-python extract_medical_records.py
-```
-
-### Specify a folder or individual files
-
-```bash
-python extract_medical_records.py path/to/folder
-python extract_medical_records.py file1.pdf file2.pdf
+python extract_medical_records.py path/to/claims.pdf
 ```
 
 ### Extract only specific fields
 
 ```bash
-# Only name and total charge
-python extract_medical_records.py --zones name,total_charge
-
-# Only date of service
-python extract_medical_records.py --zones date_of_service
+python extract_medical_records.py claims.pdf --zones name,total_charge
+python extract_medical_records.py claims.pdf --zones date_of_service
 ```
 
-Available zone keys: `name`, `date_of_service`, `total_charge`
+Available zone keys: `name`, `date_of_service`, `total_charge`, `dob`, `cpt_hcpcs`
+(Note: `cpt_hcpcs` is only available for 1500 forms)
 
-### Calibration — find pixel coordinates for your PDF
+### Force a specific form type
 
 ```bash
-python extract_medical_records.py --calibrate path/to/sample.pdf
+python extract_medical_records.py claims.pdf --form 1500
+python extract_medical_records.py claims.pdf --form ub
 ```
 
-Opens an interactive window with a live crosshair. Hover over any field to read its `x, y` pixel coordinates at 300 DPI. Existing zones are drawn in green.
+By default the form type is auto-detected per page.
+
+### Calibration — find pixel coordinates for a form
+
+```bash
+python extract_medical_records.py --calibrate templates/template_1500.png --form 1500
+python extract_medical_records.py --calibrate templates/template_ub.png --form ub
+```
+
+Opens an interactive window. Hover over any field to read its `x, y` pixel coordinates at 300 DPI. OCR zones are drawn in green, detection regions in yellow. Left-click to print coordinates to the console.
+
+### Save a template from a PDF
+
+```bash
+python extract_medical_records.py --save-template pdfs/sample_1500.pdf --form 1500
+python extract_medical_records.py --save-template pdfs/sample_ub.pdf --form ub
+```
+
+Or simply drop a clean PNG scan directly into the `templates/` folder.
 
 ---
 
 ## Configuration
 
-All configuration is at the top of `extract_medical_records.py`.
+All configuration is near the top of `extract_medical_records.py`.
 
 ### Zone coordinates
 
 ```python
-ZONES: dict[str, tuple[int, int, int, int]] = {
+ZONES_1500: dict[str, tuple[int, int, int, int]] = {
     #           x     y     w     h
-    "name":            (150, 210, 600,  55),
-    "date_of_service": (150, 310, 400,  55),
-    "total_charge":    (150, 410, 300,  55),
+    "name":            (85,  535, 830, 60),
+    "date_of_service": (82, 2200, 260, 90),
+    ...
 }
 ```
 
-Each value is `(x, y, width, height)` in pixels at 300 DPI, measured from the top-left corner of page 1. Use `--calibrate` to find the correct values for your specific form.
+Each value is `(x, y, width, height)` in pixels at 300 DPI, measured from the top-left corner of the **template image**. Use `--calibrate` to find the correct values.
 
-### Adding a new field
+### Confidence threshold
 
-1. Add an entry to `ZONES` and `ZONE_PSM` with its coordinates and preferred Tesseract PSM mode
-2. Add a matching entry to `ZONE_FIELDS` with its Excel column label and cleaner (`"name"`, `"date"`, or `"charge"`)
-3. If needed, write a new cleaner function and register it in the `CLEANERS` dict
+```python
+LOW_CONFIDENCE_THRESHOLD = 50  # inliers below this → flagged as low confidence
+```
+
+Raise this value to flag more results for review, lower it to be more permissive.
+
+### Adding a new zone
+
+1. Add an entry to `ZONES_1500` and/or `ZONES_UB` with its coordinates
+2. Add a matching entry to `ZONE_PSM` with the preferred Tesseract PSM mode
+3. Add a matching entry to `ZONE_FIELDS` with its Excel column label and cleaner key (`"name"`, `"date"`, `"charge"`, or `"cpt"`)
+4. If a new cleaner is needed, write it and register it in the `CLEANERS` dict
 
 ### Debug mode
 
 ```python
-DEBUG = False  # Set to True to save cropped zone images and print raw OCR text
+DEBUG = True  # Set to False to disable
 ```
 
-When enabled, saves `debug_<field>.png` for each zone and prints raw Tesseract output for every PSM attempt — useful for diagnosing extraction issues.
+When enabled, saves cropped zone images (`debug_<form>_<field>.png`) and prints raw Tesseract output for every PSM attempt — useful for diagnosing extraction issues.
 
 ---
 
 ## Output
 
-Results are saved to `medical_records_output.xlsx` in the working directory. The file is overwritten on each run. If the file is open in Excel, the script will prompt you to close it before retrying.
+Results are saved to `medical_records_output.xlsx`, overwriting on each run. If the file is open in Excel the script will prompt you to close it.
 
 | Column | Description |
 |--------|-------------|
 | File | Source PDF filename |
+| Page | Page number within the PDF |
+| Form Type | `1500` or `UB` |
+| Confidence | `OK` or `LOW` — low-confidence rows are highlighted yellow |
 | Name | Patient name |
-| Date of Service | Date formatted as `MM/DD/YYYY` |
-| Total Charge | Billing amount |
+| Date of Service | Formatted as `MM/DD/YYYY` |
+| Total Charge | Whole-dollar billing amount |
+| Date of Birth | Formatted as `MM/DD/YYYY` |
+| CPT/HCPCS | 5-digit procedure code (1500 forms only) |
 
 ---
 
@@ -129,9 +156,12 @@ Results are saved to `medical_records_output.xlsx` in the working directory. The
 
 ```
 .
-├── extract_medical_records.py  # Main script
+├── extract_medical_records.py   # Main script
 ├── requirements.txt
 ├── README.md
-├── pdfs/                       # Place input PDFs here
-└── medical_records_output.xlsx # Generated on each run
+├── templates/
+│   ├── template_1500.png        # Reference scan for CMS-1500 alignment
+│   └── template_ub.png          # Reference scan for UB-04 alignment
+├── pdfs/                        # Place input PDFs here
+└── medical_records_output.xlsx  # Generated on each run
 ```
