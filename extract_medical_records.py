@@ -46,7 +46,7 @@ from pdf2image import convert_from_path
 # --- CMS-1500 Health Insurance Claim zones ---
 ZONES_1500: dict[str, tuple[int, int, int, int]] = {
     #           x     y     w     h
-    "name":            (85,   535, 830,  60),
+    "name":            (85,   535, 750,  60),
     "date_of_service": (82,  2200, 260,  90),
     "total_charge":    (1588, 2825, 290,  75),
     "dob":             (980,  550,  290,  50),
@@ -57,7 +57,7 @@ ZONES_1500: dict[str, tuple[int, int, int, int]] = {
 ZONES_UB: dict[str, tuple[int, int, int, int]] = {
     #           x     y     w     h
     "name":            (80,   310, 860,  50),
-    "date_of_service": (435,  398, 210,  40),
+    "date_of_service": (405,  400, 210,  50),
     "total_charge":    (1838, 2008, 295,  40),
     "dob":             (48,   390, 260,  60),
 }
@@ -65,14 +65,14 @@ ZONES_UB: dict[str, tuple[int, int, int, int]] = {
 # Tesseract PSM per zone. 7=single line | 6=block | 8=single word
 ZONE_PSM: dict[str, str] = {
     "name":            "--psm 7",
-    "date_of_service": "--psm 4",
+    "date_of_service": "--psm 7",
     "total_charge":    "--psm 7",
     "dob":             "--psm 7",
     "cpt_hcpcs":       "--psm 8",
 }
 
 # Zones that use only their configured PSM with no fallback.
-ZONE_PSM_FIXED = {"date_of_service"}
+ZONE_PSM_FIXED = set()  # No zones currently locked to a single PSM
 
 # Tesseract character whitelists.
 TESSERACT_WHITELIST_NAME    = "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz- "
@@ -114,7 +114,7 @@ TEMPLATE_DIR = "templates"
 # ---------------------------------------------------------------------------
 OUTPUT_FILE              = "medical_records_output.xlsx"
 LOW_CONFIDENCE_THRESHOLD = 50    # Inliers below this → flagged as low confidence
-DEBUG                    = False   # Set False to disable debug output
+DEBUG                    = False  # Set False to disable debug output
 
 # ---------------------------------------------------------------------------
 # UTILITY
@@ -241,7 +241,7 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
     """OCR header regions to identify the form type. Returns 'cms' or 'ub'."""
 
     def read_region(region: tuple[int, int, int, int],
-                    upscale: int = 1, enhance: bool = False) -> str:
+                    upscale: int = 1, enhance: bool = False, invert: bool = False) -> str:
         cropped = crop_zone(img_bgr, region)
         if cropped is None:
             return ""
@@ -254,6 +254,8 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
             gray  = clahe.apply(gray)
             gray  = cv2.filter2D(gray, -1, np.array([[0, -1, 0], [-1, 5, -1], [0, -1, 0]]))
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
+        if invert:
+            binary = cv2.bitwise_not(binary)
         texts = []
         for psm in ("--psm 7", "--psm 11", "--psm 6", "--psm 3", "--psm 8"):
             t = pytesseract.image_to_string(
@@ -263,7 +265,7 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
         return " ".join(texts)
 
     top_left    = read_region(DETECT_REGION_1500)
-    bottom_left = read_region(DETECT_REGION_UB, upscale=3, enhance=True)
+    bottom_left = read_region(DETECT_REGION_UB, upscale=6, enhance=True, invert=True)
 
     if DEBUG:
         save_detect_debug(img_bgr, "autodetect")
@@ -272,7 +274,7 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
 
     if "health insurance" in top_left:
         return "cms"
-    if any(kw in bottom_left for kw in ("type", "bill", "type of bill", "4 type")):
+    if any(kw in bottom_left for kw in ("type", "bill", "type of bill", "4 type", "ty", "0111", "typt", "of bi")):
         return "ub"
 
     raise ValueError(
@@ -444,6 +446,11 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
             return (upper / len(letters) if letters else 0) * len(letters) - non_alpha * 2
         if letters and not digits and len(t) > 15:
             return 0.0
+        # For date/dob fields prefer candidates with exactly 6-8 consecutive digits
+        if field_name in ("date_of_service", "dob"):
+            consec = re.findall(r'\d{6,8}', re.sub(r'\D', '', t))
+            if consec:
+                return len(consec[0]) + 10
         if not digits and len(re.sub(r'\D', '', t)) == len(alnum):
             return len(alnum) + 10
         return len(digits) - len(letters) * 0.5
