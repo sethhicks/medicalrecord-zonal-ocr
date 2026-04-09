@@ -114,7 +114,7 @@ TEMPLATE_DIR = "templates"
 # ---------------------------------------------------------------------------
 OUTPUT_FILE              = "medical_records_output.xlsx"
 LOW_CONFIDENCE_THRESHOLD = 50    # Inliers below this → flagged as low confidence
-DEBUG                    = False  # Set True to save debug images and print raw OCR
+DEBUG                    = False   # Set False to disable debug output
 
 # ---------------------------------------------------------------------------
 # UTILITY

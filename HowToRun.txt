@@ -1,0 +1,11 @@
+-Make sure Python is installed
+-Open CMD in this folder and run: pip install -r requirements.txt
+-Install Tesseract: https://github.com/UB-Mannheim/tesseract/wiki
+-Download Poppler and place in C:\Program Files\ --> C:\Program Files\poppler
+-In Windows search bar, search "Edit environment variables"
+-Edit the "Path" variable, and add C:\Program Files\Tesseract-OCR
+-Also add C:\Program Files\poppler\Library\bin
+To run script:
+1. Open CMD in folder
+2. Place PDF to scan in pdfs folder
+3. Type in CMD: python extract_medical_records.py pdfs\(filename.pdf)
