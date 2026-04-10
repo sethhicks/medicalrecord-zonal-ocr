@@ -114,7 +114,7 @@ TEMPLATE_DIR = "templates"
 # ---------------------------------------------------------------------------
 OUTPUT_FILE              = "medical_records_output.xlsx"
 LOW_CONFIDENCE_THRESHOLD = 50    # Inliers below this → flagged as low confidence
-DEBUG                    = False  # Set False to disable debug output
+DEBUG                    = False   # Set False to disable debug output
 
 # ---------------------------------------------------------------------------
 # UTILITY
@@ -174,12 +174,12 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
     """
     template_path = _template_path(form_type)
     if not os.path.exists(template_path):
-        print(f"    ⚠  Template not found: {template_path} — skipping alignment.")
+        print(f"    ⚠  Template not found: {template_path} — skipping alignment.", flush=True)
         return img_bgr, 0
 
     template = cv2.imread(template_path)
     if template is None:
-        print(f"    ⚠  Could not load template: {template_path} — skipping alignment.")
+        print(f"    ⚠  Could not load template: {template_path} — skipping alignment.", flush=True)
         return img_bgr, 0
 
     h_t, w_t = template.shape[:2]
@@ -197,7 +197,7 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
     kp_s, des_s = orb.detectAndCompute(gray_scan, None)
 
     if des_t is None or des_s is None or len(kp_t) < 4 or len(kp_s) < 4:
-        print("    ⚠  Not enough ORB features — skipping alignment.")
+        print("    ⚠  Not enough ORB features — skipping alignment.", flush=True)
         return img_bgr, 0
 
     matcher     = cv2.BFMatcher(cv2.NORM_HAMMING, crossCheck=False)
@@ -205,7 +205,7 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
     good        = [m for m, n in raw_matches if m.distance < 0.75 * n.distance]
 
     if len(good) < 10:
-        print(f"    ⚠  Too few good matches ({len(good)}) — skipping alignment.")
+        print(f"    ⚠  Too few good matches ({len(good)}) — skipping alignment.", flush=True)
         return img_bgr, 0
 
     pts_t = np.float32([kp_t[m.queryIdx].pt for m in good])
@@ -213,12 +213,12 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
 
     H, mask = cv2.findHomography(pts_s, pts_t, cv2.RANSAC, 5.0)
     if H is None:
-        print("    ⚠  Homography estimation failed — skipping alignment.")
+        print("    ⚠  Homography estimation failed — skipping alignment.", flush=True)
         return img_bgr, 0
 
     inliers = int(mask.sum()) if mask is not None else 0
     if DEBUG:
-        print(f"    [debug] homography: {len(good)} matches, {inliers} inliers")
+        print(f"    [debug] homography: {len(good)} matches, {inliers} inliers", flush=True)
 
     S     = np.diag([WORK_SCALE, WORK_SCALE, 1.0])
     H_full = np.linalg.inv(S) @ H.astype(np.float64) @ S
@@ -229,7 +229,7 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
 
     if DEBUG:
         cv2.imwrite(f"debug_{form_type}_aligned.png", aligned)
-        print(f"    [debug] saved aligned scan → debug_{form_type}_aligned.png")
+        print(f"    [debug] saved aligned scan → debug_{form_type}_aligned.png", flush=True)
 
     return aligned, inliers
 
@@ -269,8 +269,8 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
 
     if DEBUG:
         save_detect_debug(img_bgr, "autodetect")
-        print(f"    [debug] cms detect text: {top_left!r}")
-        print(f"    [debug] UB detect text:   {bottom_left!r}")
+        print(f"    [debug] cms detect text: {top_left!r}", flush=True)
+        print(f"    [debug] UB detect text:   {bottom_left!r}", flush=True)
 
     if "health insurance" in top_left:
         return "cms"
@@ -404,7 +404,7 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
     cropped = crop_zone(img_bgr, zone)
     if cropped is None:
         if DEBUG:
-            print(f"    [debug] {field_name} zone is outside image bounds — skipping.")
+            print(f"    [debug] {field_name} zone is outside image bounds — skipping.", flush=True)
         return ""
 
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
@@ -416,7 +416,7 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
     if DEBUG and field_name:
         prefix = f"debug_{form_type}_" if form_type else "debug_"
         cv2.imwrite(f"{prefix}{field_name}.png", processed)
-        print(f"    [debug] saved cropped zone → {prefix}{field_name}.png")
+        print(f"    [debug] saved cropped zone → {prefix}{field_name}.png", flush=True)
 
     psm_modes  = [psm] if field_name in ZONE_PSM_FIXED else [psm, "--psm 6", "--psm 4", "--psm 3"]
     candidates = []
@@ -427,7 +427,7 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
         else:
             text = pytesseract.image_to_string(processed, config=f"{TESSERACT_WHITELIST_NUMERIC} {mode}").strip()
         if DEBUG:
-            print(f"    [debug] {field_name} psm={mode!r:12s} → {text!r}")
+            print(f"    [debug] {field_name} psm={mode!r:12s} → {text!r}", flush=True)
         if text:
             candidates.append(text)
 
@@ -467,7 +467,7 @@ def extract_page(img_bgr: np.ndarray, pdf_name: str, page_num: int,
     if not form_type:
         try:
             form_type          = detect_form_type(img_bgr)
-            print(f"    Detected form:       {form_type.upper()} (raw scan)")
+            print(f"    Detected form:       {form_type.upper()} (raw scan)", flush=True)
             img_bgr, inliers   = align_to_template(img_bgr, form_type)
         except ValueError:
             for candidate in FORM_ZONES:
@@ -475,7 +475,7 @@ def extract_page(img_bgr: np.ndarray, pdf_name: str, page_num: int,
                 try:
                     form_type = detect_form_type(aligned)
                     img_bgr, inliers = aligned, cand_inliers
-                    print(f"    Detected form:       {form_type.upper()} (after {candidate} alignment)")
+                    print(f"    Detected form:       {form_type.upper()} (after {candidate} alignment)", flush=True)
                     break
                 except ValueError:
                     continue
@@ -486,10 +486,10 @@ def extract_page(img_bgr: np.ndarray, pdf_name: str, page_num: int,
 
     low_confidence = inliers < LOW_CONFIDENCE_THRESHOLD
     if low_confidence:
-        print(f"    ⚠  LOW CONFIDENCE — alignment inliers: {inliers} (threshold: {LOW_CONFIDENCE_THRESHOLD})")
-        print(f"       Results may be inaccurate. Review manually.")
+        print(f"    ⚠  LOW CONFIDENCE — alignment inliers: {inliers} (threshold: {LOW_CONFIDENCE_THRESHOLD})", flush=True)
+        print(f"       Results may be inaccurate. Review manually.", flush=True)
     else:
-        print(f"    Alignment confidence: OK ({inliers} inliers)")
+        print(f"    Alignment confidence: OK ({inliers} inliers)", flush=True)
 
     zones = FORM_ZONES[form_type]
     if active_zones is None:
@@ -515,20 +515,20 @@ def extract_all_pages(pdf_path: str, active_zones: list[str] | None = None,
     """Render every page of a PDF and extract fields from each."""
     pages    = convert_from_path(pdf_path, dpi=300)
     pdf_name = os.path.basename(pdf_path)
-    print(f"  {len(pages)} page(s) found in {pdf_name}")
+    print(f"  {len(pages)} page(s) found in {pdf_name}", flush=True)
 
     records = []
     for i, page in enumerate(pages, start=1):
-        print(f"  Page {i}/{len(pages)}")
+        print(f"  Page {i}/{len(pages)}", flush=True)
         img_bgr = cv2.cvtColor(np.array(page), cv2.COLOR_RGB2BGR)
         try:
             record = extract_page(img_bgr, pdf_name, i, active_zones, form_type)
             records.append(record)
             for key, val in record.items():
                 if key not in ("File", "Page", "Form Type", "Confidence"):
-                    print(f"    {key:<20} {val or '(not found)'}")
+                    print(f"    {key:<20} {val or '(not found)'}", flush=True)
         except Exception as e:
-            print(f"    ❌  Error on page {i}: {e}")
+            print(f"    ❌  Error on page {i}: {e}", flush=True)
 
     return records
 
@@ -542,25 +542,25 @@ def save_detect_debug(img_bgr: np.ndarray, form_type: str) -> None:
                          ("detect_ub",   DETECT_REGION_UB)]:
         cropped = crop_zone(img_bgr, region)
         if cropped is None:
-            print(f"    [debug] detection region {name} is outside image bounds — skipping.")
+            print(f"    [debug] detection region {name} is outside image bounds — skipping.", flush=True)
             continue
         gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
         _, binary = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
         path = f"debug_{form_type}_{name}.png"
         cv2.imwrite(path, binary)
-        print(f"    [debug] saved detection region → {path}")
+        print(f"    [debug] saved detection region → {path}", flush=True)
 
 
 def run_calibration(path: str, zones: dict[str, tuple[int, int, int, int]]) -> None:
     """Interactive calibration window — hover to read pixel coordinates."""
-    print(f"Calibrating against: {path}")
-    print("Hover to read coordinates. Press Q or Escape to quit.\n")
+    print(f"Calibrating against: {path}", flush=True)
+    print("Hover to read coordinates. Press Q or Escape to quit.\n", flush=True)
 
     ext = os.path.splitext(path)[1].lower()
     if ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp"):
         img = cv2.imread(path)
         if img is None:
-            print(f"❌  Could not load image: {path}")
+            print(f"❌  Could not load image: {path}", flush=True)
             return
     else:
         pages = convert_from_path(path, dpi=300, first_page=1, last_page=1)
@@ -593,7 +593,7 @@ def run_calibration(path: str, zones: dict[str, tuple[int, int, int, int]]) -> N
                                            int(overlay.shape[0] * scale)))
         cv2.imshow(win, overlay)
         if event == cv2.EVENT_LBUTTONDOWN:
-            print(f"  Clicked: x={rx}, y={ry}")
+            print(f"  Clicked: x={rx}, y={ry}", flush=True)
 
     win  = "Calibration — press Q to quit"
     disp = cv2.resize(img, (int(img.shape[1] * scale), int(img.shape[0] * scale))) if scale < 1.0 else img.copy()
@@ -603,7 +603,7 @@ def run_calibration(path: str, zones: dict[str, tuple[int, int, int, int]]) -> N
     while cv2.waitKey(20) & 0xFF not in (ord('q'), 27):
         pass
     cv2.destroyAllWindows()
-    print("Calibration closed.")
+    print("Calibration closed.", flush=True)
 
 # ---------------------------------------------------------------------------
 # EXCEL OUTPUT
@@ -637,9 +637,9 @@ def setup_workbook(header: list[str]):
     if os.path.exists(OUTPUT_FILE):
         try:
             os.remove(OUTPUT_FILE)
-            print(f"  Overwriting existing file: {OUTPUT_FILE}")
+            print(f"  Overwriting existing file: {OUTPUT_FILE}", flush=True)
         except PermissionError:
-            print(f"\n❌  Cannot overwrite {OUTPUT_FILE} — close it in Excel and retry.")
+            print(f"\n❌  Cannot overwrite {OUTPUT_FILE} — close it in Excel and retry.", flush=True)
             sys.exit(1)
 
     wb = openpyxl.Workbook()
@@ -680,7 +680,7 @@ def save_to_excel(records: list[dict], active_zones: list[str]) -> None:
     for i, record in enumerate(records):
         append_row(ws, record, start_row + i, header)
     wb.save(OUTPUT_FILE)
-    print(f"\n✅  Saved {len(records)} record(s) → {OUTPUT_FILE}")
+    print(f"\n✅  Saved {len(records)} record(s) → {OUTPUT_FILE}", flush=True)
 
 # ---------------------------------------------------------------------------
 # CLI
@@ -691,10 +691,10 @@ def resolve_pdf(args: list[str]) -> str:
     if len(candidates) == 1:
         return candidates[0]
     if not candidates:
-        print("❌  No PDF file provided.")
-        print("   Usage: python extract_medical_records.py path/to/file.pdf")
+        print("❌  No PDF file provided.", flush=True)
+        print("   Usage: python extract_medical_records.py path/to/file.pdf", flush=True)
     else:
-        print("❌  Multiple PDF files provided — please pass exactly one PDF.")
+        print("❌  Multiple PDF files provided — please pass exactly one PDF.", flush=True)
     sys.exit(1)
 
 
@@ -720,14 +720,14 @@ def parse_args(argv: list[str]):
 
     form_type = args.form.lower()
     if form_type not in FORM_ZONES:
-        print(f"❌  Unknown form type: {args.form}. Available: {', '.join(FORM_ZONES)}")
+        print(f"❌  Unknown form type: {args.form}. Available: {', '.join(FORM_ZONES)}", flush=True)
         sys.exit(1)
 
     if args.zones:
         requested = [z.strip() for z in args.zones.split(",")]
         invalid   = [z for z in requested if z not in ZONE_FIELDS]
         if invalid:
-            print(f"❌  Unknown zone(s): {', '.join(invalid)}. Available: {', '.join(ZONE_FIELDS)}")
+            print(f"❌  Unknown zone(s): {', '.join(invalid)}. Available: {', '.join(ZONE_FIELDS)}", flush=True)
             sys.exit(1)
         active_zones = requested
     else:
@@ -750,13 +750,13 @@ def main() -> None:
         if ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp"):
             img = cv2.imread(args.save_template)
             if img is None:
-                print(f"❌  Could not load image: {args.save_template}")
+                print(f"❌  Could not load image: {args.save_template}", flush=True)
                 sys.exit(1)
         else:
             pages = convert_from_path(args.save_template, dpi=300, first_page=1, last_page=1)
             img   = cv2.cvtColor(np.array(pages[0]), cv2.COLOR_RGB2BGR)
         cv2.imwrite(out_path, img)
-        print(f"✅  Saved template → {out_path}")
+        print(f"✅  Saved template → {out_path}", flush=True)
         return
 
     pdf_path     = resolve_pdf(args.pdfs)
@@ -764,13 +764,13 @@ def main() -> None:
     explicit_zones = active_zones_arg if args.zones else None
     header_zones   = active_zones_arg if args.zones else list(ZONE_FIELDS.keys())
 
-    print(f"Reading: {pdf_path}\n")
+    print(f"Reading: {pdf_path}\n", flush=True)
     records = extract_all_pages(pdf_path, explicit_zones, explicit_form)
 
     if records:
         save_to_excel(records, header_zones)
     else:
-        print("No records extracted.")
+        print("No records extracted.", flush=True)
 
 
 if __name__ == "__main__":
