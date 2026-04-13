@@ -146,7 +146,7 @@ TEMPLATE_DIR = "templates"
 # ---------------------------------------------------------------------------
 OUTPUT_FILE              = "medical_records_output.xlsx"
 LOW_CONFIDENCE_THRESHOLD = 50    # Inliers below this → flagged as low confidence
-DEBUG                    = True   # Set False to disable debug output
+DEBUG                    = False  # Set False to disable debug output
 
 # ---------------------------------------------------------------------------
 # UTILITY
@@ -577,7 +577,7 @@ def extract_page(img_bgr: np.ndarray, pdf_name: str, page_num: int,
 def extract_all_pages(pdf_path: str, active_zones: list[str] | None = None,
                       form_type: str = "") -> list[dict]:
     """Render every page of a PDF and extract fields from each."""
-    pages    = convert_from_path(pdf_path, dpi=300)
+    pages    = _convert_from_path(pdf_path, dpi=300)
     pdf_name = os.path.basename(pdf_path)
     print(f"  {len(pages)} page(s) found in {pdf_name}", flush=True)
 
@@ -817,7 +817,7 @@ def main() -> None:
                 print(f"❌  Could not load image: {args.save_template}", flush=True)
                 sys.exit(1)
         else:
-            pages = convert_from_path(args.save_template, dpi=300, first_page=1, last_page=1)
+            pages = _convert_from_path(args.save_template, dpi=300, first_page=1, last_page=1)
             img   = cv2.cvtColor(np.array(pages[0]), cv2.COLOR_RGB2BGR)
         cv2.imwrite(out_path, img)
         print(f"✅  Saved template → {out_path}", flush=True)
