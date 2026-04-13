@@ -23,7 +23,7 @@ Dependencies:
       macOS:         brew install tesseract poppler
       Windows:       install Tesseract from https://github.com/UB-Mannheim/tesseract/wiki
                      install Poppler from https://github.com/oschwartz10612/poppler-windows/releases
-                     and add both to PATH
+                     Paths are configured automatically below — no PATH setup needed.
 """
 
 import argparse
@@ -40,6 +40,36 @@ from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from pdf2image import convert_from_path
 
 # ---------------------------------------------------------------------------
+# TOOL PATHS — Windows only
+# Update these if Tesseract or Poppler are installed to non-default locations.
+# On macOS/Linux these are left empty and the system PATH is used instead.
+# ---------------------------------------------------------------------------
+if sys.platform == "win32":
+    # Tesseract executable
+    _TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+    # Poppler bin directory (contains pdfinfo.exe, pdftoppm.exe, etc.)
+    _POPPLER_PATH   = r"C:\Program Files\poppler\Library\bin"
+
+    if os.path.exists(_TESSERACT_PATH):
+        pytesseract.pytesseract.tesseract_cmd = _TESSERACT_PATH
+    else:
+        print(f"⚠  Tesseract not found at {_TESSERACT_PATH!r} — update TOOL PATHS in script.")
+
+    # Validate poppler path and inject into pdf2image calls via a wrapper
+    if not os.path.exists(_POPPLER_PATH):
+        print(f"⚠  Poppler not found at {_POPPLER_PATH!r} — update TOOL PATHS in script.")
+        _POPPLER_PATH = None
+else:
+    _POPPLER_PATH = None   # macOS/Linux: use system PATH
+
+
+def _convert_from_path(pdf_path: str, **kwargs):
+    """Wrapper around pdf2image.convert_from_path that injects the Poppler path."""
+    if _POPPLER_PATH:
+        kwargs.setdefault("poppler_path", _POPPLER_PATH)
+    return convert_from_path(pdf_path, **kwargs)
+
+# ---------------------------------------------------------------------------
 # CONFIGURATION
 # ---------------------------------------------------------------------------
 
@@ -48,7 +78,7 @@ ZONES_1500: dict[str, tuple[int, int, int, int]] = {
     #           x     y     w     h
     "name":            (85,   535, 750,  60),
     "date_of_service": (82,  2200, 260,  90),
-    "total_charge":    (1588, 2825, 290,  75),
+    "total_charge":    (1588, 2864, 290,  36),
     "dob":             (980,  550,  290,  50),
     "cpt_hcpcs":       (805,  2215, 205,  90),
 }
@@ -74,9 +104,11 @@ ZONE_PSM: dict[str, str] = {
 # Zones that use only their configured PSM with no fallback.
 ZONE_PSM_FIXED = set()  # No zones currently locked to a single PSM
 
-# Tesseract character whitelists.
-TESSERACT_WHITELIST_NAME    = "-c tessedit_char_whitelist=ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz- "
-TESSERACT_WHITELIST_NUMERIC = "-c tessedit_char_whitelist=0123456789./ "
+# Tesseract whitelists are intentionally empty — Tesseract 5.x on Windows
+# silently returns empty output when tessedit_char_whitelist is set.
+# Character filtering is handled by the field cleaners instead.
+TESSERACT_WHITELIST_NAME    = ""
+TESSERACT_WHITELIST_NUMERIC = ""
 
 # Maps each zone key to its Excel column label and cleaner function name.
 ZONE_FIELDS: dict[str, dict] = {
@@ -114,7 +146,7 @@ TEMPLATE_DIR = "templates"
 # ---------------------------------------------------------------------------
 OUTPUT_FILE              = "medical_records_output.xlsx"
 LOW_CONFIDENCE_THRESHOLD = 50    # Inliers below this → flagged as low confidence
-DEBUG                    = False   # Set False to disable debug output
+DEBUG                    = True   # Set False to disable debug output
 
 # ---------------------------------------------------------------------------
 # UTILITY
@@ -192,7 +224,7 @@ def align_to_template(img_bgr: np.ndarray, form_type: str) -> tuple[np.ndarray, 
     gray_tmpl = cv2.cvtColor(tmpl_small, cv2.COLOR_BGR2GRAY)
     gray_scan = cv2.cvtColor(scan_small, cv2.COLOR_BGR2GRAY)
 
-    orb = cv2.ORB_create(nfeatures=5000)
+    orb = cv2.ORB_create(nfeatures=10000)
     kp_t, des_t = orb.detectAndCompute(gray_tmpl, None)
     kp_s, des_s = orb.detectAndCompute(gray_scan, None)
 
@@ -258,8 +290,7 @@ def detect_form_type(img_bgr: np.ndarray) -> str:
             binary = cv2.bitwise_not(binary)
         texts = []
         for psm in ("--psm 7", "--psm 11", "--psm 6", "--psm 3", "--psm 8"):
-            t = pytesseract.image_to_string(
-                    binary, config=TESSERACT_WHITELIST_NAME + " " + psm).lower()
+            t = pytesseract.image_to_string(binary, config=psm).lower()
             if t.strip():
                 texts.append(t)
         return " ".join(texts)
@@ -317,12 +348,36 @@ def clean_name(raw: str) -> str:
     return scrub(max(candidates, key=line_score)) if candidates else ""
 
 
+def _correct_year(yy: str) -> str:
+    """Fix common OCR misreads in 4-digit years.
+    - Years < 1900: swap middle digits (e.g. 1069 → 1969)
+    - Years with implausible decade digit (e.g. 1909 → 1969, 1x0y → 1x6y)
+      where a 0 in position 2 likely means a misread 6 or 9.
+    """
+    y = int(yy)
+    # Truly impossible year — swap middle digits then force 19xx
+    if y < 1900:
+        swapped = yy[0] + yy[2] + yy[1] + yy[3]
+        yy = swapped if int(swapped) >= 1900 else "19" + yy[2:4]
+        y = int(yy)
+    # Year starts with 19 and has 0 in tens position (e.g. 1909, 1902)
+    # but is before 1910 — almost certainly a misread 6→0 or 9→0
+    if yy[:2] == "19" and yy[2] == "0" and y < 1920:
+        # Try replacing the 0 with 6 (most common OCR swap for this character)
+        candidate = "19" + "6" + yy[3]
+        if 1920 <= int(candidate) <= 2010:
+            yy = candidate
+    return yy
+
+
 def clean_date(raw: str) -> str:
     """Normalise OCR date output to MM/DD/YYYY."""
     digits = re.sub(r'\D', '', raw)
 
     if len(digits) == 8:
-        return f"{digits[0:2]}/{digits[2:4]}/{digits[4:8]}"
+        mm, dd, yy = digits[0:2], digits[2:4], digits[4:8]
+        yy = _correct_year(yy)
+        return f"{mm}/{dd}/{yy}"
     if len(digits) == 7:
         # Could be MDDYYYY or 1MMDDYY — pick by plausible year
         opt_a = f"0{digits[0]}/{digits[1:3]}/{digits[3:7]}"
@@ -408,8 +463,11 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
         return ""
 
     gray = cv2.cvtColor(cropped, cv2.COLOR_BGR2GRAY)
-    gray = cv2.resize(gray, (gray.shape[1] * 2, gray.shape[0] * 2),
-                      interpolation=cv2.INTER_CUBIC)
+
+    if DEBUG and field_name:
+        prefix = f"debug_{form_type}_" if form_type else "debug_"
+        cv2.imwrite(f"{prefix}{field_name}_raw.png", gray)
+        print(f"    [debug] saved raw crop → {prefix}{field_name}_raw.png", flush=True)
 
     processed = preprocess_image(gray, sharpen=(field_name != "name"))
 
@@ -419,13 +477,13 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
         print(f"    [debug] saved cropped zone → {prefix}{field_name}.png", flush=True)
 
     psm_modes  = [psm] if field_name in ZONE_PSM_FIXED else [psm, "--psm 6", "--psm 4", "--psm 3"]
+    inverted  = cv2.bitwise_not(processed)
     candidates = []
     for mode in psm_modes:
-        # Name uses no whitelist — full language model needed to recognise spaces
-        if field_name == "name":
-            text = pytesseract.image_to_string(processed, config=mode).strip()
-        else:
-            text = pytesseract.image_to_string(processed, config=f"{TESSERACT_WHITELIST_NUMERIC} {mode}").strip()
+        for img_variant in (processed, inverted):
+            text = pytesseract.image_to_string(img_variant, config=mode).strip()
+            if text:
+                break
         if DEBUG:
             print(f"    [debug] {field_name} psm={mode!r:12s} → {text!r}", flush=True)
         if text:
@@ -455,6 +513,12 @@ def ocr_zone(img_bgr: np.ndarray, zone: tuple[int, int, int, int], psm: str,
             return len(alnum) + 10
         return len(digits) - len(letters) * 0.5
 
+    # Majority vote — if multiple candidates agree, prefer that value
+    from collections import Counter
+    vote = Counter(candidates)
+    top_val, top_count = vote.most_common(1)[0]
+    if top_count > 1:
+        return top_val
     return max(candidates, key=plausibility)
 
 
@@ -563,7 +627,7 @@ def run_calibration(path: str, zones: dict[str, tuple[int, int, int, int]]) -> N
             print(f"❌  Could not load image: {path}", flush=True)
             return
     else:
-        pages = convert_from_path(path, dpi=300, first_page=1, last_page=1)
+        pages = _convert_from_path(path, dpi=300, first_page=1, last_page=1)
         img   = cv2.cvtColor(np.array(pages[0]), cv2.COLOR_RGB2BGR)
 
     # Draw OCR zones (green) and detection regions (yellow)

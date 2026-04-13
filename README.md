@@ -40,11 +40,14 @@ pip install -r requirements.txt
 | macOS | `brew install tesseract poppler` |
 | Windows | Install [Tesseract](https://github.com/UB-Mannheim/tesseract/wiki) and [Poppler](https://github.com/oschwartz10612/poppler-windows/releases), then add both to PATH |
 
-On Windows you may also need to set the Tesseract path explicitly near the top of the script:
+On Windows, Tesseract and Poppler paths are configured directly in the script — no PATH setup required. Update the **TOOL PATHS** section near the top of `extract_medical_records.py` if you install either tool to a non-default location:
 
 ```python
-pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+_TESSERACT_PATH = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+_POPPLER_PATH   = r"C:\Program Files\poppler\Library\bin"
 ```
+
+**Important:** The default Tesseract Windows installer includes only the legacy engine data. For best OCR accuracy, replace `C:\Program Files\Tesseract-OCR\tessdata\eng.traineddata` with the LSTM version from [tessdata_best](https://github.com/tesseract-ocr/tessdata_best/blob/main/eng.traineddata) (click "Download raw file").
 
 ---
 
